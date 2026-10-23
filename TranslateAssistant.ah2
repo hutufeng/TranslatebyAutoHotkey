@@ -2,12 +2,16 @@
 #SingleInstance Force
 
 ; ==============================================================================
-; 划词与多模态剪贴板翻译助手 - TranslateAssistant (Windows 11)
+; 划词与多模态翻译助手 - TranslateAssistant (Windows 11)
 ; ==============================================================================
 
 global ConfigFile := A_ScriptDir . "\config.ini"
-global CopilotHotkey := "!c"
-global GeminiHotkey := "!v"
+
+; 用户配置项与默认值
+global ActiveEngine := "Copilot"
+global TranslateHotkey := "!c"
+global CopilotAppHotkey := "#c"
+global GeminiAppHotkey := "!g"
 global CopilotDelayMs := 600
 global GeminiDelayMs := 600
 global TextPromptTemplate := "请将以下内容准确翻译为简体中文，保持自然流畅：`n`n{text}"
@@ -18,19 +22,15 @@ LoadConfig()
 InitTrayMenu()
 BindHotkeys()
 
-TrayTip "翻译助手已就绪", "Alt + C: Copilot | Alt + V: Gemini", "Iconi"
+TrayTip "翻译助手已就绪", "当前引擎: " . ActiveEngine . " (快捷键: " . TranslateHotkey . ")", "Iconi"
 
 ; ==============================================================================
-; 核心分发逻辑
-; 优先级 1：选中文字 -> 复制 -> 传递 -> 翻译 (自动发送)
-; 优先级 2：没有选中 -> 剪贴板已有内容：
-;           - 截图 (CF_BITMAP) -> 粘贴图片 -> 贴入 ImagePrompt -> 手动发送
-;           - 文件 (CF_HDROP)  -> 粘贴文件 -> 贴入 FilePrompt  -> 手动发送
-;           - 文本             -> 贴入文本 Prompt -> 自动发送
+; 核心翻译分发逻辑
+; 统一由 TranslateHotkey 触发当前 ActiveEngine
 ; ==============================================================================
 
-ExecuteTranslate(targetEngine) {
-    global TextPromptTemplate, ImagePrompt, FilePrompt
+ExecuteTranslate() {
+    global ActiveEngine, TextPromptTemplate, ImagePrompt, FilePrompt
 
     ; 临时备份原始剪贴板
     savedClip := ClipboardAll()
@@ -41,33 +41,29 @@ ExecuteTranslate(targetEngine) {
     Sleep 120
     seqAfter := DllCall("GetClipboardSequenceNumber", "UInt")
 
-    ; 判定是否成功抓取了新选区文本 (优先级 1)
+    ; 优先级 1: 成功抓取新选区文本 -> 自动发送
     if (seqAfter != seqBefore && A_Clipboard != "") {
         selectedText := Trim(A_Clipboard)
         prompt := FormatTextPrompt(selectedText)
-        DispatchToEngine(targetEngine, "text", prompt)
+        DispatchToEngine(ActiveEngine, "text", prompt)
         return
     }
 
-    ; 未抓取到新选区，恢复原有剪贴板，触发 (优先级 2: 剪贴板已有内容)
+    ; 未抓取到新选区，恢复原有剪贴板，触发优先级 2 (剪贴板已有内容)
     A_Clipboard := savedClip
     Sleep 50
 
-    ; 检查剪贴板格式
     isImage := DllCall("IsClipboardFormatAvailable", "UInt", 2)  ; CF_BITMAP = 2 (纯截图)
     isFile  := DllCall("IsClipboardFormatAvailable", "UInt", 15) ; CF_HDROP = 15 (复制的文件/文档)
 
     if (isImage) {
-        ; 剪贴板是截图
-        DispatchToEngine(targetEngine, "image", ImagePrompt)
+        DispatchToEngine(ActiveEngine, "image", ImagePrompt)
     } else if (isFile) {
-        ; 剪贴板是文件/文档（PDF/Word/代码/本地图片文件等）
-        DispatchToEngine(targetEngine, "file", FilePrompt)
+        DispatchToEngine(ActiveEngine, "file", FilePrompt)
     } else if (A_Clipboard != "") {
-        ; 剪贴板是纯文本
         existingText := Trim(A_Clipboard)
         prompt := FormatTextPrompt(existingText)
-        DispatchToEngine(targetEngine, "text", prompt)
+        DispatchToEngine(ActiveEngine, "text", prompt)
     }
 }
 
@@ -79,17 +75,12 @@ FormatTextPrompt(rawText) {
     return TextPromptTemplate . "`n`n" . rawText
 }
 
-; 高性能提示词粘贴并秒级还原剪贴板（兼顾瞬时粘贴与原数据零污染）
+; 毫秒级借用并立即还原剪贴板
 PasteAndRestoreClipboard(payload) {
-    ; 1. 完整备份剪贴板（包含图片/文件句柄等原始二进制）
     clipBackup := ClipboardAll()
-
-    ; 2. 毫秒级借用剪贴板进行 Ctrl+V 粘贴（支持超长提示词瞬间完成）
     A_Clipboard := payload
     Send "^v"
     Sleep 120
-
-    ; 3. 立即还原原剪贴板内容，图片/文件原样无损保全
     A_Clipboard := clipBackup
 }
 
@@ -100,31 +91,31 @@ PressEnterToSubmit() {
 }
 
 ; ==============================================================================
-; AI 引擎调用与投递（智能防误关 + 多模态分流）
+; AI 引擎调用（使用 config.ini 中可配的 AppHotkeys）
 ; ==============================================================================
 
-DispatchToEngine(targetEngine, contentType, payload) {
-    if (StrLower(targetEngine) = "copilot") {
-        SendToCopilot(contentType, payload)
-    } else {
+DispatchToEngine(engineName, contentType, payload) {
+    if (StrLower(engineName) = "gemini") {
         SendToGemini(contentType, payload)
+    } else {
+        SendToCopilot(contentType, payload)
     }
 }
 
 SendToCopilot(contentType, payload) {
-    global CopilotDelayMs
+    global CopilotAppHotkey, CopilotDelayMs
 
     SetTitleMatchMode 2
     copilotHwnd := WinExist("Copilot") || WinExist("ahk_exe msedgewebview2.exe")
 
     if (copilotHwnd) {
-        ; 窗口已存在：直接激活置顶，绝不重复按 Win+C（防止被意外关闭）
+        ; 窗口已存在：直接激活置顶，绝不重复发送唤起按键（防止被 Toggle 误关闭）
         WinActivate(copilotHwnd)
         WinWaitActive(copilotHwnd, , 1.5)
         Sleep 250
     } else {
-        ; 窗口未打开：发送 Win+C 呼出
-        Send "#c"
+        ; 窗口未打开：发送配置文件中指定的 Copilot 唤起快捷键
+        Send CopilotAppHotkey
         Sleep CopilotDelayMs
     }
 
@@ -133,31 +124,28 @@ SendToCopilot(contentType, payload) {
         Send "^v"
         PressEnterToSubmit()
     } else if (contentType = "image" || contentType = "file") {
-        ; 1. 粘贴截图或复制的文件
         Send "^v"
         Sleep 500
-        ; 2. 毫秒级借用粘贴对应提示词，并立即恢复原剪贴板附件
         PasteAndRestoreClipboard(payload)
-        ; 3. 多模态附件模式光标停在末尾，等待用户按回车手动发送
     }
 }
 
 SendToGemini(contentType, payload) {
-    global GeminiDelayMs
+    global GeminiAppHotkey, GeminiDelayMs
 
     SetTitleMatchMode 2
     geminiHwnd := WinExist("Gemini ahk_exe chrome.exe") || WinExist("Gemini")
 
     if (geminiHwnd) {
-        ; 窗口已存在：直接激活置顶，绝不重复按 Alt+G（防止被意外关闭）
+        ; 窗口已存在：直接激活置顶，绝不重复发送唤起按键（防止被 Toggle 误关闭）
         if (WinGetMinMax(geminiHwnd) == -1)
             WinRestore(geminiHwnd)
         WinActivate(geminiHwnd)
         WinWaitActive(geminiHwnd, , 1.5)
         Sleep 250
     } else {
-        ; 窗口尚未打开：发送系统原生 Alt+G 呼出小浮窗
-        Send "!g"
+        ; 窗口未打开：发送配置文件中指定的 Gemini 唤起快捷键
+        Send GeminiAppHotkey
         Sleep GeminiDelayMs
     }
 
@@ -166,22 +154,19 @@ SendToGemini(contentType, payload) {
         Send "^v"
         PressEnterToSubmit()
     } else if (contentType = "image" || contentType = "file") {
-        ; 1. 粘贴截图或复制的文件
         Send "^v"
         Sleep 500
-        ; 2. 毫秒级借用粘贴对应提示词，并立即恢复原剪贴板附件
         PasteAndRestoreClipboard(payload)
-        ; 3. 多模态附件模式光标停在末尾，等待用户按回车手动发送
     }
 }
 
 ; ==============================================================================
-; 纯 UTF-8 驱动配置读取
+; 纯 UTF-8 驱动配置读取与动态绑定
 ; ==============================================================================
 
 LoadConfig() {
-    global ConfigFile, CopilotHotkey, GeminiHotkey, CopilotDelayMs, GeminiDelayMs
-    global TextPromptTemplate, ImagePrompt, FilePrompt
+    global ConfigFile, ActiveEngine, TranslateHotkey, CopilotAppHotkey, GeminiAppHotkey
+    global CopilotDelayMs, GeminiDelayMs, TextPromptTemplate, ImagePrompt, FilePrompt
 
     if !FileExist(ConfigFile)
         return
@@ -200,8 +185,10 @@ LoadConfig() {
                 val := StrReplace(val, "``n", "`n")
 
                 switch StrLower(key) {
-                    case "copilothotkey": CopilotHotkey := val
-                    case "geminihotkey": GeminiHotkey := val
+                    case "activeengine": ActiveEngine := val
+                    case "translatehotkey": TranslateHotkey := val
+                    case "copilotapphotkey": CopilotAppHotkey := val
+                    case "geminiapphotkey": GeminiAppHotkey := val
                     case "copilotdelayms": CopilotDelayMs := Integer(val)
                     case "geminidelayms": GeminiDelayMs := Integer(val)
                     case "textprompttemplate": TextPromptTemplate := val
@@ -214,13 +201,10 @@ LoadConfig() {
 }
 
 BindHotkeys() {
-    global CopilotHotkey, GeminiHotkey
+    global TranslateHotkey
 
-    if (CopilotHotkey != "") {
-        try Hotkey CopilotHotkey, (*) => ExecuteTranslate("copilot"), "On"
-    }
-    if (GeminiHotkey != "") {
-        try Hotkey GeminiHotkey, (*) => ExecuteTranslate("gemini"), "On"
+    if (TranslateHotkey != "") {
+        try Hotkey TranslateHotkey, (*) => ExecuteTranslate(), "On"
     }
 }
 
@@ -229,11 +213,22 @@ BindHotkeys() {
 ; ==============================================================================
 
 InitTrayMenu() {
+    global ActiveEngine, TranslateHotkey
     tray := A_TrayMenu
     tray.Delete()
 
-    tray.Add("划词翻译助手 (Alt+C: Copilot | Alt+V: Gemini)", (*) => OpenConfigFile())
+    tray.Add("划词翻译助手 (" . TranslateHotkey . " -> " . ActiveEngine . ")", (*) => OpenConfigFile())
     tray.Disable("1&")
+    tray.Add()
+
+    ; 单选引擎切换
+    tray.Add("切换默认引擎为: Copilot", (*) => SwitchEngine("Copilot"))
+    tray.Add("切换默认引擎为: Gemini", (*) => SwitchEngine("Gemini"))
+    if (StrLower(ActiveEngine) = "gemini") {
+        tray.Check("切换默认引擎为: Gemini")
+    } else {
+        tray.Check("切换默认引擎为: Copilot")
+    }
     tray.Add()
 
     tray.Add("📝 打开配置文件 (config.ini)", (*) => OpenConfigFile())
@@ -246,6 +241,24 @@ InitTrayMenu() {
 
     tray.Add()
     tray.Add("❌ 退出程序", (*) => ExitApp())
+}
+
+SwitchEngine(newEngine) {
+    global ConfigFile, ActiveEngine
+    ActiveEngine := newEngine
+
+    ; 更新配置文件中的 ActiveEngine 行
+    if FileExist(ConfigFile) {
+        try {
+            content := FileRead(ConfigFile, "UTF-8")
+            newContent := RegExReplace(content, "i)ActiveEngine\s*=\s*.*", "ActiveEngine=" . newEngine)
+            FileDelete(ConfigFile)
+            FileAppend(newContent, ConfigFile, "UTF-8")
+        }
+    }
+
+    TrayTip "引擎已切换", "当前翻译引擎已切换为: " . newEngine, "Iconi"
+    InitTrayMenu()
 }
 
 OpenConfigFile() {

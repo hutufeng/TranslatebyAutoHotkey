@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # TranslateAssistant Start Script
 # ==============================================================================
 
@@ -61,5 +61,5 @@ Write-Host "[*] Launching TranslateAssistant in background..." -ForegroundColor 
 Start-Process -FilePath $ahkPath -ArgumentList "`"$ScriptPath`"" -WorkingDirectory $WorkspaceDir
 
 Write-Host "[OK] TranslateAssistant is now running in system tray." -ForegroundColor Green
-Write-Host "     - Alt + C: Send to Copilot (Selected text / Screenshot / Existing clipboard)" -ForegroundColor White
-Write-Host "     - Alt + V: Send to Gemini  (Selected text / Screenshot / Existing clipboard)" -ForegroundColor White
+Write-Host "     - Press Alt + C to translate (Selected text / Screenshot / File)" -ForegroundColor White
+Write-Host "     - Right-click tray icon to switch between Copilot and Gemini" -ForegroundColor DarkGray

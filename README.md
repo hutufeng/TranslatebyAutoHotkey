@@ -23,47 +23,11 @@
 
 ---
 
-## ⌨️ 默认快捷键
+## ⌨️ 极简按键交互设计
 
-| 快捷键 | 目标 AI | 适用场景 | 发送机制 |
-| :--- | :--- | :--- | :--- |
-| **`Alt + C`** | **Microsoft Copilot** | 选中文本 / 屏幕截图 / 复制小文档 | 文本自动发送；图片/文件手动按回车 |
-| **`Alt + V`** | **Google Gemini** | 选中文本 / 屏幕截图 / 复制小文档 | 文本自动发送；图片/文件手动按回车 |
-
-> 快捷键紧密相邻，单手盲打极顺手，且完美避开各软件原生的全局快捷键冲突。可在 `config.ini` 中随意修改。
-
----
-
-## 📂 项目结构
-
-```text
-TranslateAssistant/
-├── config.ini               # 外置配置文件（热键、提示词、延时设置）
-├── TranslateAssistant.ah2   # 核心业务逻辑脚本（AutoHotkey v2 驱动）
-├── run.ps1                  # 环境自检与一键后台启动脚本
-├── build.ps1                # 自动化打包生成独立 .exe 脚本
-└── README.md                # 本说明文档
-```
-
----
-
-## 🚀 快速上手
-
-### 1. 启动运行
-
-在 PowerShell 中执行以下命令（首次运行若无 AutoHotkey v2，脚本会自动协助安装）：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File "run.ps1"
-```
-
-启动后程序静默最小化至右下角任务栏托盘（绿色小图标）。
-
-### 2. 使用方法
-
-1. **划词翻译**：用鼠标划选任意软件里的英文段落，按下 `Alt + C` 或 `Alt + V`，AI 自动弹出并输出翻译结果。
-2. **截图翻译**：按截图键（如微信/QQ/`Win+Shift+S`）截取局部图像后，直接按 `Alt + C` 或 `Alt + V`，图片和提示词自动就绪，待图片上传完毕随手敲击回车发送。
-3. **小文档翻译**：在文件夹中对某个代码文件或小文档按 `Ctrl + C`，按下快捷键即可自动带入附件与文档提示词。
+* **用户只需记一个快捷键**：默认 **`Alt + C`**（可在配置中任意修改）。
+* **自动调用当前激活的引擎**：默认使用 **Microsoft Copilot**。
+* **随时随地一键切换**：在右下角任务栏托盘右键，点击切换为 **Gemini**（自动写入配置文件保存，开机依然生效）。
 
 ---
 
@@ -72,23 +36,36 @@ powershell -ExecutionPolicy Bypass -File "run.ps1"
 所有设置均以纯 UTF-8 驱动，记事本打开直接编辑，修改后右键托盘图标点击 **“🔄 重新加载配置”** 即可秒级生效：
 
 ```ini
-[Hotkeys]
-; 快捷键设置（! 代表 Alt，^ 代表 Ctrl，+ 代表 Shift，# 代表 Win）
-CopilotHotkey=!c
-GeminiHotkey=!v
+[General]
+; 当前激活的翻译引擎：可填 Copilot 或 Gemini（默认 Copilot）
+; 您可在右下角托盘图标中直接一键切换
+ActiveEngine=Copilot
+
+[UserHotkey]
+; 您日常触发翻译的全局快捷键（只需记这一个键，触发当前 ActiveEngine）
+; 快捷键格式：! 代表 Alt，^ 代表 Ctrl，+ 代表 Shift，# 代表 Win
+TranslateHotkey=!c
+
+[AppHotkeys]
+; 目标 AI 软件自身在 Windows 系统中的唤出快捷键（若软件快捷键改变，在此修改即可）
+; Copilot 系统呼出键（Win11 默认为 Win + C，即 #c）
+CopilotAppHotkey=#c
+
+; Gemini 浮窗系统呼出键（Chrome/扩展默认为 Alt + G，即 !g）
+GeminiAppHotkey=!g
 
 [Settings]
 ; 窗口呼出等待就绪毫秒数
 CopilotDelayMs=600
 GeminiDelayMs=600
 
-; 纯文本翻译提示词模板（{text} 会被自动替换）
+; 纯文本翻译提示词模板（{text} 会自动替换为目标文本）
 TextPromptTemplate=请将以下内容准确翻译为简体中文，保持自然流畅：`n`n{text}
 
-; 截图翻译提示词
+; 截图翻译提示词（当剪贴板为纯截图时调用）
 ImagePrompt=请提取并翻译图片中的内容为简体中文，保持自然流畅。
 
-; 文档/文件翻译提示词
+; 文档/文件翻译提示词（当复制了 PDF、Word、TXT、图片等文件时调用）
 FilePrompt=请阅读所附文件，并将其内容准确翻译为简体中文，保持自然流畅。
 ```
 
