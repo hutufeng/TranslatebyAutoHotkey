@@ -1,0 +1,9 @@
+# 编译产物
+dist/
+tools/
+bin/
+
+# 临时与日志文件
+*.log
+*.tmp
+.system_generated/
