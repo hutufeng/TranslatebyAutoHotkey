@@ -24,27 +24,22 @@ jobs:
           Write-Host "[*] 正在准备构建环境..."
           New-Item -ItemType Directory -Path "dist", "tools/ahk", "tools/compiler" -Force | Out-Null
 
-          # 1. 从 AutoHotkey 官方 GitHub Releases 获取最新免安装内核 (避开官网 Cloudflare 拦截)
-          Write-Host "[*] 从 GitHub 官方 Releases 检索最新 AutoHotkey v2 内核..."
+          # 1. 动态获取 AutoHotkey v2 官方最新内核 (精准匹配版本资产，无硬编码)
+          Write-Host "[*] 检索 AutoHotkey v2 官方最新内核..."
           $ahkApi = "https://api.github.com/repos/AutoHotkey/AutoHotkey/releases/latest"
           $ahkRelease = Invoke-RestMethod -Uri $ahkApi -Headers @{"User-Agent"="GitHubActions"}
           $ahkAsset = $ahkRelease.assets | Where-Object { $_.name -match '^AutoHotkey_[\d\.]+\.zip$' } | Select-Object -First 1
-          
-          if (-not $ahkAsset) {
-              # Fallback 稳定地址
-              $ahkZipUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.18/AutoHotkey_2.0.18.zip"
-          } else {
-              $ahkZipUrl = $ahkAsset.browser_download_url
-          }
-
-          Write-Host "[*] 正在下载 AutoHotkey 内核: $ahkZipUrl"
-          Invoke-WebRequest -Uri $ahkZipUrl -OutFile "tools/ahk.zip" -UseBasicParsing
+          Write-Host "[*] 正在下载 AutoHotkey 内核: $($ahkAsset.browser_download_url)"
+          Invoke-WebRequest -Uri $ahkAsset.browser_download_url -OutFile "tools/ahk.zip" -UseBasicParsing
           Expand-Archive -Path "tools/ahk.zip" -DestinationPath "tools/ahk" -Force
 
-          # 2. 从 GitHub 下载官方 Ahk2Exe 编译器
-          Write-Host "[*] 下载官方 Ahk2Exe 编译工具..."
-          $compilerUrl = "https://github.com/AutoHotkey/Ahk2Exe/releases/latest/download/Ahk2Exe.zip"
-          Invoke-WebRequest -Uri $compilerUrl -OutFile "tools/compiler.zip" -UseBasicParsing
+          # 2. 动态获取 Ahk2Exe 官方最新编译器 (精准匹配版本资产，无硬编码)
+          Write-Host "[*] 检索 Ahk2Exe 官方最新编译器..."
+          $compilerApi = "https://api.github.com/repos/AutoHotkey/Ahk2Exe/releases/latest"
+          $compilerRelease = Invoke-RestMethod -Uri $compilerApi -Headers @{"User-Agent"="GitHubActions"}
+          $compilerAsset = $compilerRelease.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1
+          Write-Host "[*] 正在下载 Ahk2Exe 编译器: $($compilerAsset.browser_download_url)"
+          Invoke-WebRequest -Uri $compilerAsset.browser_download_url -OutFile "tools/compiler.zip" -UseBasicParsing
           Expand-Archive -Path "tools/compiler.zip" -DestinationPath "tools/compiler" -Force
 
           # 3. 执行编译打包
