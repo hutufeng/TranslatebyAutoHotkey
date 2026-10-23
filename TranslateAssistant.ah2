@@ -15,7 +15,7 @@ global GeminiAppHotkey := "!g"
 global CopilotDelayMs := 600
 global GeminiDelayMs := 600
 global TextPromptTemplate := "请将以下内容准确翻译为简体中文，保持自然流畅：`n`n{text}"
-global ImagePrompt := "请提取并翻译图片中的内容为简体中文，保持自然流畅。"
+global ImagePrompt := "请先完整提取图片中的文字内容（保留代码与排版），随后将其准确翻译为简体中文："
 global FilePrompt := "请阅读所附文件，并将其内容准确翻译为简体中文，保持自然流畅。"
 
 LoadConfig()
