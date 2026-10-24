@@ -128,18 +128,29 @@ GetGeminiMiniHwnd() {
 }
 
 GetCopilotMiniHwnd() {
-    ; Copilot 迷你侧边栏：宿主为 msedgewebview2.exe 且宽度 <= 500
+    SetTitleMatchMode 2
+    ; 1. 优先精准匹配现代 Win11 的专属独立进程 (copilotapp.exe / copilotapphost.exe)
+    if WinExist("ahk_exe copilotapp.exe")
+        return WinExist("ahk_exe copilotapp.exe")
+    if WinExist("ahk_exe copilotapphost.exe")
+        return WinExist("ahk_exe copilotapphost.exe")
+
+    ; 2. 匹配标题包含 Copilot 的窗口
+    if WinExist("Copilot ahk_class ApplicationFrameWindow")
+        return WinExist("Copilot ahk_class ApplicationFrameWindow")
+    if WinExist("Copilot")
+        return WinExist("Copilot")
+
+    ; 3. 兼容老版本 WebView2 容器
     try {
         ids := WinGetList("ahk_exe msedgewebview2.exe")
         for this_id in ids {
             if !DllCall("IsWindowVisible", "Ptr", this_id)
                 continue
             WinGetPos &x, &y, &w, &h, this_id
-            if (w > 0 && w <= 500)
+            if (w > 0 && w <= 650)
                 return this_id
         }
-        if WinExist("Copilot ahk_class ApplicationFrameWindow")
-            return WinExist("Copilot ahk_class ApplicationFrameWindow")
     }
     return 0
 }
