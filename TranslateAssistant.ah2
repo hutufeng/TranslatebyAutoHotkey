@@ -27,7 +27,6 @@ TrayTip "翻译助手已就绪", "引擎: " . ActiveEngine . " [" . WindowMode .
 
 ; ==============================================================================
 ; 核心翻译分发逻辑
-; 统一由 TranslateHotkey 触发当前 ActiveEngine
 ; ==============================================================================
 
 ExecuteTranslate() {
@@ -88,7 +87,6 @@ CleanPromptFromText(rawText) {
 
 FormatTextPrompt(rawText) {
     global TextPromptTemplate
-    ; 先清洗剔除任何已存在的旧提示词，永远只保留一层纯正提示词！
     pureText := CleanPromptFromText(rawText)
     if InStr(TextPromptTemplate, "{text}") {
         return StrReplace(TextPromptTemplate, "{text}", pureText)
@@ -112,93 +110,92 @@ PressEnterToSubmit() {
 }
 
 ; ==============================================================================
-; 窗口指纹精准探测（基于真实物理可见性与屏幕几何吸附特征）
+; 纯进程与窗口直接前置激活（不依赖任何屏幕坐标与大小，彻底杜绝 Toggle 误关闭）
 ; ==============================================================================
 
-GetGeminiMiniHwnd() {
-    try {
-        ids := WinGetList("ahk_exe chrome.exe")
-        for this_id in ids {
-            if !DllCall("IsWindowVisible", "Ptr", this_id)
-                continue
-            WinGetPos &x, &y, &w, &h, this_id
-            if (w >= 300 && w <= 650) {
-                title := WinGetTitle(this_id)
-                if !InStr(title, " - Google Chrome")
-                    return this_id
-            }
-        }
-    }
-    return 0
-}
-
-GetGeminiFullHwnd() {
-    try {
-        ids := WinGetList("ahk_exe chrome.exe")
-        for this_id in ids {
-            if !DllCall("IsWindowVisible", "Ptr", this_id)
-                continue
-            WinGetPos &x, &y, &w, &h, this_id
-            if (w > 650) {
-                title := WinGetTitle(this_id)
-                if InStr(title, "Gemini")
-                    return this_id
-            }
-        }
-    }
-    return 0
-}
-
-GetCopilotMiniHwnd() {
-    ; 1. 扫描属于 copilotapp.exe 且真实可见的迷你侧边栏窗口
+; 直接激活已存在的 Copilot 界面（不论是全屏还是小浮窗，只要有真实 UI 窗口直接前置）
+ActivateCopilotDirect() {
+    ; 1. 扫描属于 Copilot 独立进程的真实可见窗口
     try {
         ids := WinGetList("ahk_exe copilotapp.exe")
-        for this_id in ids {
-            if DllCall("IsWindowVisible", "Ptr", this_id) {
-                WinGetPos &x, &y, &w, &h, this_id
-                if (w >= 300 && w <= 650)
-                    return this_id
+        for id in ids {
+            if DllCall("IsWindowVisible", "Ptr", id) {
+                WinGetPos &x, &y, &w, &h, id
+                if (w > 100 && h > 100) {
+                    if (WinGetMinMax(id) == -1)
+                        WinRestore(id)
+                    WinActivate(id)
+                    WinWaitActive(id, , 1.5)
+                    return true
+                }
             }
         }
     }
 
-    ; 2. 扫描吸附在屏幕最右边缘的原生系统侧边栏抽屉 (严密物理几何特征)
-    try {
-        ids := WinGetList()
-        for this_id in ids {
-            if !DllCall("IsWindowVisible", "Ptr", this_id)
-                continue
-
-            title := WinGetTitle(this_id)
-            cls := WinGetClass(this_id)
-
-            if (InStr(title, "Copilot") || InStr(cls, "Copilot") || cls = "Windows.UI.Core.CoreWindow" || cls = "ApplicationFrameWindow") {
-                WinGetPos &x, &y, &w, &h, this_id
-                ; 右侧抽屉绝对物理特征：宽度在 300~650，且右边缘贴近屏幕最右侧
-                if (w >= 300 && w <= 650 && (x + w >= A_ScreenWidth - 20))
-                    return this_id
+    ; 2. 扫描系统级包含 Copilot 标题的可见窗口
+    SetTitleMatchMode 2
+    if WinExist("Copilot") {
+        hwnd := WinExist("Copilot")
+        if DllCall("IsWindowVisible", "Ptr", hwnd) {
+            WinGetPos &x, &y, &w, &h, hwnd
+            if (w > 100 && h > 100) {
+                if (WinGetMinMax(hwnd) == -1)
+                    WinRestore(hwnd)
+                WinActivate(hwnd)
+                WinWaitActive(hwnd, , 1.5)
+                return true
             }
         }
     }
-    return 0
+    return false
 }
 
-GetCopilotFullHwnd() {
+; 直接激活已存在的 Gemini 快速小浮窗
+ActivateGeminiDirect() {
     try {
-        ids := WinGetList("ahk_exe copilotapp.exe")
-        for this_id in ids {
-            if !DllCall("IsWindowVisible", "Ptr", this_id)
-                continue
-            WinGetPos &x, &y, &w, &h, this_id
-            if (w > 650)
-                return this_id
+        ids := WinGetList("ahk_exe chrome.exe")
+        for id in ids {
+            if DllCall("IsWindowVisible", "Ptr", id) {
+                title := WinGetTitle(id)
+                ; 排除普通浏览器大网页（普通网页必带 - Google Chrome 后缀）
+                if !InStr(title, " - Google Chrome") {
+                    WinGetPos &x, &y, &w, &h, id
+                    if (w > 100 && h > 100) {
+                        if (WinGetMinMax(id) == -1)
+                            WinRestore(id)
+                        WinActivate(id)
+                        WinWaitActive(id, , 1.5)
+                        return true
+                    }
+                }
+            }
         }
     }
-    return 0
+    return false
+}
+
+; 激活 Gemini 完整大窗口
+ActivateGeminiFullDirect() {
+    try {
+        ids := WinGetList("ahk_exe chrome.exe")
+        for id in ids {
+            if DllCall("IsWindowVisible", "Ptr", id) {
+                title := WinGetTitle(id)
+                if InStr(title, "Gemini") {
+                    if (WinGetMinMax(id) == -1)
+                        WinRestore(id)
+                    WinActivate(id)
+                    WinWaitActive(id, , 1.5)
+                    return true
+                }
+            }
+        }
+    }
+    return false
 }
 
 ; ==============================================================================
-; 引擎调度（支持 Mini 与 Full 模式）
+; 引擎调度
 ; ==============================================================================
 
 DispatchToEngine(engineName, contentType, payload) {
@@ -212,44 +209,29 @@ DispatchToEngine(engineName, contentType, payload) {
 SendToCopilot(contentType, payload) {
     global WindowMode, CopilotAppHotkey, CopilotDelayMs
 
-    if (StrLower(WindowMode) = "full") {
-        fullHwnd := GetCopilotFullHwnd()
-        if (fullHwnd != 0) {
-            if (WinGetMinMax(fullHwnd) == -1)
-                WinRestore(fullHwnd)
-            WinActivate(fullHwnd)
-            WinWaitActive(fullHwnd, , 1.5)
-            Sleep 150
-        } else {
+    ; 优先直接前置激活窗口（幂等操作，无论按多少次绝对不会关闭窗口！）
+    if (!ActivateCopilotDirect()) {
+        ; 桌面完全没有该窗口时，才首次呼出
+        if (StrLower(WindowMode) = "full") {
             copilotExe := "C:\Program Files (x86)\Microsoft\Copilot\Application\copilotapp.exe"
             if FileExist(copilotExe) {
                 Run '"' . copilotExe . '"'
             } else {
                 try Run "copilot:"
             }
-            Sleep CopilotDelayMs
-        }
-    } else {
-        miniHwnd := GetCopilotMiniHwnd()
-        if (miniHwnd != 0) {
-            ; 侧边栏抽屉已在桌面：直接置顶激活，绝不重复按 Win+C（防止被关闭！）
-            if (WinGetMinMax(miniHwnd) == -1)
-                WinRestore(miniHwnd)
-            WinActivate(miniHwnd)
-            WinWaitActive(miniHwnd, , 1.5)
-            Sleep 150
         } else {
             KeyWait "Alt", "T0.3"
             Send "{Alt up}{Ctrl up}{Shift up}"
             Sleep 50
             SetKeyDelay 40, 40
             SendEvent CopilotAppHotkey
-            Sleep CopilotDelayMs
         }
+        Sleep CopilotDelayMs
+    } else {
+        Sleep 150
     }
 
     if (contentType = "text") {
-        ; 全面升级为借用并秒级还原，彻底消除提示词污染剪贴板！
         PasteAndRestoreClipboard(payload)
         PressEnterToSubmit()
     } else if (contentType = "image" || contentType = "file") {
@@ -262,15 +244,11 @@ SendToCopilot(contentType, payload) {
 SendToGemini(contentType, payload) {
     global WindowMode, GeminiAppHotkey, GeminiDelayMs
 
+    isActivated := false
+
     if (StrLower(WindowMode) = "full") {
-        fullHwnd := GetGeminiFullHwnd()
-        if (fullHwnd != 0) {
-            if (WinGetMinMax(fullHwnd) == -1)
-                WinRestore(fullHwnd)
-            WinActivate(fullHwnd)
-            WinWaitActive(fullHwnd, , 1.5)
-            Sleep 150
-        } else {
+        isActivated := ActivateGeminiFullDirect()
+        if (!isActivated) {
             try {
                 Run 'chrome.exe --app="https://gemini.google.com"'
             } catch {
@@ -279,14 +257,9 @@ SendToGemini(contentType, payload) {
             Sleep 1500
         }
     } else {
-        miniHwnd := GetGeminiMiniHwnd()
-        if (miniHwnd != 0) {
-            if (WinGetMinMax(miniHwnd) == -1)
-                WinRestore(miniHwnd)
-            WinActivate(miniHwnd)
-            WinWaitActive(miniHwnd, , 1.5)
-            Sleep 150
-        } else {
+        ; 优先直接前置激活（绝不重复发送 Alt+G！）
+        isActivated := ActivateGeminiDirect()
+        if (!isActivated) {
             KeyWait "Alt", "T0.3"
             Send "{Alt up}{Ctrl up}{Shift up}"
             Sleep 50
@@ -295,6 +268,9 @@ SendToGemini(contentType, payload) {
             Sleep GeminiDelayMs
         }
     }
+
+    if (isActivated)
+        Sleep 150
 
     if (contentType = "text") {
         PasteAndRestoreClipboard(payload)
