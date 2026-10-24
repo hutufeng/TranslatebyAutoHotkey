@@ -1,4 +1,4 @@
-﻿name: Build and Release TranslateAssistant
+name: Build and Release TranslateAssistant
 
 on:
   push:
@@ -42,12 +42,29 @@ jobs:
           Invoke-WebRequest -Uri $compilerAsset.browser_download_url -OutFile "tools/compiler.zip" -UseBasicParsing
           Expand-Archive -Path "tools/compiler.zip" -DestinationPath "tools/compiler" -Force
 
-          # 3. 执行编译打包
+          # 3. 执行编译打包 (Ahk2Exe 是 GUI 程序，必须 -Wait 等待编译完成)
           Write-Host "[*] 正在将 TranslateAssistant.ah2 编译为单文件 exe..."
-          $compiler = "tools/compiler/Ahk2Exe.exe"
-          $baseAhk = "tools/ahk/AutoHotkey64.exe"
+          $compiler = (Resolve-Path "tools/compiler/Ahk2Exe.exe").Path
+          $baseAhk = (Resolve-Path "tools/ahk/AutoHotkey64.exe").Path
+          $inScript = (Resolve-Path "TranslateAssistant.ah2").Path
+          $outExe = (Join-Path $PWD "dist/TranslateAssistant.exe")
           
-          & $compiler /in "TranslateAssistant.ah2" /out "dist/TranslateAssistant.exe" /base "$baseAhk"
+          $proc = Start-Process -FilePath $compiler -ArgumentList "/in `"$inScript`" /out `"$outExe`" /base `"$baseAhk`"" -PassThru -Wait -NoNewWindow
+          
+          # 等待文件完全写入与句柄释放
+          $retry = 0
+          while (-not (Test-Path $outExe) -and $retry -lt 15) {
+              Start-Sleep -Seconds 1
+              $retry++
+          }
+
+          if (-not (Test-Path $outExe)) {
+              Write-Error "Ahk2Exe 编译失败，未生成 $outExe"
+              exit 1
+          }
+          
+          $exeSize = (Get-Item $outExe).Length
+          Write-Host "[√] 编译成功: $outExe (大小: $exeSize 字节)"
 
           # 4. 拷贝配置文件到发布包中
           Copy-Item "config.ini" -Destination "dist/config.ini" -Force

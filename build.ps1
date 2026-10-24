@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # TranslateAssistant 自动化打包脚本 (Auto Build to Single .exe)
 # ==============================================================================
 
@@ -93,7 +93,13 @@ if (-not (Test-Path $DistDir)) {
 }
 
 Write-Host "[*] 正在编译构建 $OutputExe ..." -ForegroundColor Cyan
-& $ahk2exe /in "$ScriptPath" /out "$OutputExe" /base "$baseAhk"
+$proc = Start-Process -FilePath $ahk2exe -ArgumentList "/in `"$ScriptPath`" /out `"$OutputExe`" /base `"$baseAhk`"" -PassThru -Wait -NoNewWindow
+
+$retry = 0
+while (-not (Test-Path $OutputExe) -and $retry -lt 15) {
+    Start-Sleep -Seconds 1
+    $retry++
+}
 
 if (Test-Path $OutputExe) {
     # 拷贝一份 config.ini 到输出目录
