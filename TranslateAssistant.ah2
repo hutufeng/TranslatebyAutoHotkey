@@ -105,6 +105,9 @@ DispatchToEngine(engineName, contentType, payload) {
 SendToCopilot(contentType, payload) {
     global CopilotAppHotkey, CopilotDelayMs
 
+    Send "{Alt up}{Ctrl up}{Shift up}"
+    Sleep 40
+
     SetTitleMatchMode 2
     copilotHwnd := WinExist("Copilot") || WinExist("ahk_exe msedgewebview2.exe")
 
@@ -133,22 +136,25 @@ SendToCopilot(contentType, payload) {
 SendToGemini(contentType, payload) {
     global GeminiAppHotkey, GeminiDelayMs
 
-    SetTitleMatchMode 2
-    geminiHwnd := WinExist("Gemini ahk_exe chrome.exe") || WinExist("Gemini")
+    ; 1. 关键保护：先释放物理 Alt 键，防止与用户刚刚按下的 Alt+C 产生修饰键冲突
+    Send "{Alt up}{Ctrl up}{Shift up}"
+    Sleep 60
 
-    if (geminiHwnd) {
-        ; 窗口已存在：直接激活置顶，绝不重复发送唤起按键（防止被 Toggle 误关闭）
-        if (WinGetMinMax(geminiHwnd) == -1)
-            WinRestore(geminiHwnd)
-        WinActivate(geminiHwnd)
-        WinWaitActive(geminiHwnd, , 1.5)
-        Sleep 250
-    } else {
-        ; 窗口未打开：发送配置文件中指定的 Gemini 唤起快捷键
-        Send GeminiAppHotkey
-        Sleep GeminiDelayMs
+    ; 2. 模拟真实击键发送 GeminiAppHotkey（如 Alt+G），确保 Chromium 能够精准捕获
+    SetKeyDelay 40, 40
+    SendEvent GeminiAppHotkey
+    Sleep GeminiDelayMs
+
+    ; 3. 若浮窗未能呼出（如未处于运行状态），备用拉起独立小浮窗
+    SetTitleMatchMode 2
+    if (!WinActive("Gemini") && !WinActive("ahk_exe chrome.exe")) {
+        try {
+            Run 'chrome.exe --app="https://gemini.google.com"'
+            Sleep 1500
+        }
     }
 
+    ; 4. 内容投递
     if (contentType = "text") {
         A_Clipboard := payload
         Send "^v"
