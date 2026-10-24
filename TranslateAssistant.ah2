@@ -156,7 +156,7 @@ GetCopilotMiniHwnd() {
 }
 
 SendToCopilot(contentType, payload) {
-    global CopilotAppHotkey, CopilotDelayMs
+    global CopilotDelayMs
 
     Send "{Alt up}{Ctrl up}{Shift up}"
     Sleep 40
@@ -164,13 +164,23 @@ SendToCopilot(contentType, payload) {
     miniHwnd := GetCopilotMiniHwnd()
 
     if (miniHwnd != 0) {
-        ; 迷你窗口已存在：直接激活置顶，绝不重复发送 Win+C（彻底防止触发 Toggle 关闭）
+        ; 窗口已存在：直接秒级激活置顶文字窗口，绝不发送 Win+C（避免触发语音模式）
+        if (WinGetMinMax(miniHwnd) == -1)
+            WinRestore(miniHwnd)
         WinActivate(miniHwnd)
         WinWaitActive(miniHwnd, , 1.5)
         Sleep 150
     } else {
-        ; 迷你窗口不存在：发送唤出快捷键
-        Send CopilotAppHotkey
+        ; 窗口尚未打开：直接秒级拉起 Copilot 独立文字客户端，避开 Win+C 的语音拦截
+        copilotExe := "C:\Program Files (x86)\Microsoft\Copilot\Application\copilotapp.exe"
+        if FileExist(copilotExe) {
+            Run '"' . copilotExe . '"'
+        } else {
+            ; 备用尝试协议启动
+            try Run "copilot:"
+            catch
+                Send "#c"
+        }
         Sleep CopilotDelayMs
     }
 
