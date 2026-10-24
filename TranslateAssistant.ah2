@@ -68,14 +68,35 @@ ExecuteTranslate() {
     }
 }
 
-FormatTextPrompt(rawText) {
+; 智能剥离所有历史残留的重复提示词，彻底根除“俄罗斯套娃堆叠”
+CleanPromptFromText(rawText) {
     global TextPromptTemplate
-    if InStr(TextPromptTemplate, "{text}") {
-        return StrReplace(TextPromptTemplate, "{text}", rawText)
+    prefix := StrReplace(TextPromptTemplate, "{text}", "")
+    prefix := Trim(prefix)
+
+    cleanText := rawText
+    loop 25 {
+        cleanText := Trim(cleanText)
+        if (prefix != "" && InStr(cleanText, prefix) = 1) {
+            cleanText := SubStr(cleanText, StrLen(prefix) + 1)
+        } else {
+            break
+        }
     }
-    return TextPromptTemplate . "`n`n" . rawText
+    return Trim(cleanText)
 }
 
+FormatTextPrompt(rawText) {
+    global TextPromptTemplate
+    ; 先清洗剔除任何已存在的旧提示词，永远只保留一层纯正提示词！
+    pureText := CleanPromptFromText(rawText)
+    if InStr(TextPromptTemplate, "{text}") {
+        return StrReplace(TextPromptTemplate, "{text}", pureText)
+    }
+    return TextPromptTemplate . "`n`n" . pureText
+}
+
+; 毫秒级借用并在 100ms 内立即还原剪贴板（彻底防止提示词污染系统剪贴板）
 PasteAndRestoreClipboard(payload) {
     clipBackup := ClipboardAll()
     A_Clipboard := payload
@@ -91,7 +112,7 @@ PressEnterToSubmit() {
 }
 
 ; ==============================================================================
-; 窗口指纹探测辅助函数
+; 窗口指纹精准探测（基于真实物理可见性与屏幕几何吸附特征）
 ; ==============================================================================
 
 GetGeminiMiniHwnd() {
@@ -129,20 +150,34 @@ GetGeminiFullHwnd() {
 }
 
 GetCopilotMiniHwnd() {
-    SetTitleMatchMode 2
-    if WinExist("ahk_exe copilotapphost.exe")
-        return WinExist("ahk_exe copilotapphost.exe")
-    if WinExist("Copilot ahk_class ApplicationFrameWindow")
-        return WinExist("Copilot ahk_class ApplicationFrameWindow")
-
+    ; 1. 扫描属于 copilotapp.exe 且真实可见的迷你侧边栏窗口
     try {
         ids := WinGetList("ahk_exe copilotapp.exe")
         for this_id in ids {
+            if DllCall("IsWindowVisible", "Ptr", this_id) {
+                WinGetPos &x, &y, &w, &h, this_id
+                if (w >= 300 && w <= 650)
+                    return this_id
+            }
+        }
+    }
+
+    ; 2. 扫描吸附在屏幕最右边缘的原生系统侧边栏抽屉 (严密物理几何特征)
+    try {
+        ids := WinGetList()
+        for this_id in ids {
             if !DllCall("IsWindowVisible", "Ptr", this_id)
                 continue
-            WinGetPos &x, &y, &w, &h, this_id
-            if (w > 0 && w <= 650)
-                return this_id
+
+            title := WinGetTitle(this_id)
+            cls := WinGetClass(this_id)
+
+            if (InStr(title, "Copilot") || InStr(cls, "Copilot") || cls = "Windows.UI.Core.CoreWindow" || cls = "ApplicationFrameWindow") {
+                WinGetPos &x, &y, &w, &h, this_id
+                ; 右侧抽屉绝对物理特征：宽度在 300~650，且右边缘贴近屏幕最右侧
+                if (w >= 300 && w <= 650 && (x + w >= A_ScreenWidth - 20))
+                    return this_id
+            }
         }
     }
     return 0
@@ -178,7 +213,6 @@ SendToCopilot(contentType, payload) {
     global WindowMode, CopilotAppHotkey, CopilotDelayMs
 
     if (StrLower(WindowMode) = "full") {
-        ; --- 完整独立大窗口模式 (基于进程运行) ---
         fullHwnd := GetCopilotFullHwnd()
         if (fullHwnd != 0) {
             if (WinGetMinMax(fullHwnd) == -1)
@@ -196,9 +230,9 @@ SendToCopilot(contentType, payload) {
             Sleep CopilotDelayMs
         }
     } else {
-        ; --- 快捷迷你窗口模式 (基于 Win+C 原生快捷指令) ---
         miniHwnd := GetCopilotMiniHwnd()
         if (miniHwnd != 0) {
+            ; 侧边栏抽屉已在桌面：直接置顶激活，绝不重复按 Win+C（防止被关闭！）
             if (WinGetMinMax(miniHwnd) == -1)
                 WinRestore(miniHwnd)
             WinActivate(miniHwnd)
@@ -215,8 +249,8 @@ SendToCopilot(contentType, payload) {
     }
 
     if (contentType = "text") {
-        A_Clipboard := payload
-        Send "^v"
+        ; 全面升级为借用并秒级还原，彻底消除提示词污染剪贴板！
+        PasteAndRestoreClipboard(payload)
         PressEnterToSubmit()
     } else if (contentType = "image" || contentType = "file") {
         Send "^v"
@@ -229,7 +263,6 @@ SendToGemini(contentType, payload) {
     global WindowMode, GeminiAppHotkey, GeminiDelayMs
 
     if (StrLower(WindowMode) = "full") {
-        ; --- 完整独立大窗口模式 (基于 Chrome PWA 应用进程) ---
         fullHwnd := GetGeminiFullHwnd()
         if (fullHwnd != 0) {
             if (WinGetMinMax(fullHwnd) == -1)
@@ -246,7 +279,6 @@ SendToGemini(contentType, payload) {
             Sleep 1500
         }
     } else {
-        ; --- 快捷迷你小浮窗模式 (基于 Alt+G 原生快捷指令) ---
         miniHwnd := GetGeminiMiniHwnd()
         if (miniHwnd != 0) {
             if (WinGetMinMax(miniHwnd) == -1)
@@ -265,8 +297,7 @@ SendToGemini(contentType, payload) {
     }
 
     if (contentType = "text") {
-        A_Clipboard := payload
-        Send "^v"
+        PasteAndRestoreClipboard(payload)
         PressEnterToSubmit()
     } else if (contentType = "image" || contentType = "file") {
         Send "^v"
