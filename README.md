@@ -38,6 +38,34 @@
 
 ---
 
+## 🚀 本地启动与运行指南
+
+> ⚠️ **常见误区**：直接点击 Windows 开始菜单里的 AutoHotkey 只会打开官方设置/欢迎仪表盘（AutoHotkey Dash），**不会**自动运行翻译项目。请使用以下方式运行：
+
+### 方式 1：直接双击脚本（最简单、日常推荐）
+* 在项目文件夹中，**直接双击 `TranslateAssistant.ah2`** 即可。
+* 系统已自动将 `.ah2` 后缀关联至 AutoHotkey v2，启动后会在后台静默运行（无任何黑框打扰）。
+
+### 方式 2：使用命令行 / PowerShell 启动
+在项目根目录打开终端，运行内置启动脚本：
+```powershell
+powershell -ExecutionPolicy Bypass -File "run.ps1"
+```
+或者使用一行 Windows 命令直接启动：
+```powershell
+Start-Process "TranslateAssistant.ah2"
+```
+
+### 方式 3：运行独立免安装版 `.exe`（脱离 AHK 环境）
+直接从 GitHub Releases 下载最新的 `TranslateAssistant-windows-x64.zip`，解压后双击 **`TranslateAssistant.exe`** 即可独立运行。
+
+### 💡 运行状态确认
+启动成功后，查看屏幕右下角 **任务栏托盘**（可能在折叠箭头 `^` 内）：
+* 会出现一个绿色的应用图标（悬停显示 `TranslateAssistant`）。
+* 右键该托盘图标可进行引擎切换、窗口模式切换、编辑配置与设置开机自启动。
+
+---
+
 ## ⚙️ 配置文件说明 (`config.ini`)
 
 所有设置均以纯 UTF-8 驱动，记事本打开直接编辑，修改后右键托盘图标点击 **“🔄 重新加载配置”** 即可秒级生效：

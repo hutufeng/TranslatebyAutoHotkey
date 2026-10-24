@@ -417,7 +417,7 @@ ToggleAutoStart() {
         try RegDelete(regKey, "TranslateAssistant")
         TrayTip "开机自启", "已关闭开机自启动", "Iconi"
     } else {
-        execPath := '"' . A_AhkPath . '" "' . A_ScriptFullPath . '"'
+        execPath := A_IsCompiled ? ('"' . A_ScriptFullPath . '"') : ('"' . A_AhkPath . '" "' . A_ScriptFullPath . '"')
         try RegWrite(execPath, "REG_SZ", regKey, "TranslateAssistant")
         TrayTip "开机自启", "已开启开机自启动", "Iconi"
     }
