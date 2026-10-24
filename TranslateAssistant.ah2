@@ -9,6 +9,7 @@ global ConfigFile := A_ScriptDir . "\config.ini"
 
 ; 用户配置项与默认值
 global ActiveEngine := "Copilot"
+global WindowMode := "Mini" ; Mini（快捷迷你窗口）或 Full（完整独立大窗口）
 global TranslateHotkey := "!c"
 global CopilotAppHotkey := "#c"
 global GeminiAppHotkey := "!g"
@@ -22,7 +23,7 @@ LoadConfig()
 InitTrayMenu()
 BindHotkeys()
 
-TrayTip "翻译助手已就绪", "当前引擎: " . ActiveEngine . " (快捷键: " . TranslateHotkey . ")", "Iconi"
+TrayTip "翻译助手已就绪", "引擎: " . ActiveEngine . " [" . WindowMode . "] (快捷键: " . TranslateHotkey . ")", "Iconi"
 
 ; ==============================================================================
 ; 核心翻译分发逻辑
@@ -75,7 +76,6 @@ FormatTextPrompt(rawText) {
     return TextPromptTemplate . "`n`n" . rawText
 }
 
-; 毫秒级借用并立即还原剪贴板
 PasteAndRestoreClipboard(payload) {
     clipBackup := ClipboardAll()
     A_Clipboard := payload
@@ -91,36 +91,37 @@ PressEnterToSubmit() {
 }
 
 ; ==============================================================================
-; AI 引擎调用（使用 config.ini 中可配的 AppHotkeys）
-; ==============================================================================
-
-DispatchToEngine(engineName, contentType, payload) {
-    if (StrLower(engineName) = "gemini") {
-        SendToGemini(contentType, payload)
-    } else {
-        SendToCopilot(contentType, payload)
-    }
-}
-
-; ==============================================================================
-; 迷你窗口精准指纹探测函数（基于进程名、无后缀标题与物理尺寸）
+; 窗口指纹探测辅助函数
 ; ==============================================================================
 
 GetGeminiMiniHwnd() {
-    ; 遍历所有 chrome.exe 窗口，精准寻找宽度 < 650 且可见的快速浮窗
     try {
         ids := WinGetList("ahk_exe chrome.exe")
         for this_id in ids {
             if !DllCall("IsWindowVisible", "Ptr", this_id)
                 continue
-            
             WinGetPos &x, &y, &w, &h, this_id
-            ; 图三迷你小浮窗的绝对物理尺寸：宽度在 300 到 650 之间
             if (w >= 300 && w <= 650) {
                 title := WinGetTitle(this_id)
-                if !InStr(title, " - Google Chrome") {
+                if !InStr(title, " - Google Chrome")
                     return this_id
-                }
+            }
+        }
+    }
+    return 0
+}
+
+GetGeminiFullHwnd() {
+    try {
+        ids := WinGetList("ahk_exe chrome.exe")
+        for this_id in ids {
+            if !DllCall("IsWindowVisible", "Ptr", this_id)
+                continue
+            WinGetPos &x, &y, &w, &h, this_id
+            if (w > 650) {
+                title := WinGetTitle(this_id)
+                if InStr(title, "Gemini")
+                    return this_id
             }
         }
     }
@@ -129,21 +130,13 @@ GetGeminiMiniHwnd() {
 
 GetCopilotMiniHwnd() {
     SetTitleMatchMode 2
-    ; 1. 优先精准匹配现代 Win11 的专属独立进程 (copilotapp.exe / copilotapphost.exe)
-    if WinExist("ahk_exe copilotapp.exe")
-        return WinExist("ahk_exe copilotapp.exe")
     if WinExist("ahk_exe copilotapphost.exe")
         return WinExist("ahk_exe copilotapphost.exe")
-
-    ; 2. 匹配标题包含 Copilot 的窗口
     if WinExist("Copilot ahk_class ApplicationFrameWindow")
         return WinExist("Copilot ahk_class ApplicationFrameWindow")
-    if WinExist("Copilot")
-        return WinExist("Copilot")
 
-    ; 3. 兼容老版本 WebView2 容器
     try {
-        ids := WinGetList("ahk_exe msedgewebview2.exe")
+        ids := WinGetList("ahk_exe copilotapp.exe")
         for this_id in ids {
             if !DllCall("IsWindowVisible", "Ptr", this_id)
                 continue
@@ -155,28 +148,70 @@ GetCopilotMiniHwnd() {
     return 0
 }
 
-SendToCopilot(contentType, payload) {
-    global CopilotAppHotkey, CopilotDelayMs
+GetCopilotFullHwnd() {
+    try {
+        ids := WinGetList("ahk_exe copilotapp.exe")
+        for this_id in ids {
+            if !DllCall("IsWindowVisible", "Ptr", this_id)
+                continue
+            WinGetPos &x, &y, &w, &h, this_id
+            if (w > 650)
+                return this_id
+        }
+    }
+    return 0
+}
 
-    miniHwnd := GetCopilotMiniHwnd()
+; ==============================================================================
+; 引擎调度（支持 Mini 与 Full 模式）
+; ==============================================================================
 
-    if (miniHwnd != 0) {
-        ; 快速窗口已在桌面：直接秒级置顶激活，绝不重复按 Win+C（彻底防止触发 Toggle 关闭）
-        if (WinGetMinMax(miniHwnd) == -1)
-            WinRestore(miniHwnd)
-        WinActivate(miniHwnd)
-        WinWaitActive(miniHwnd, , 1.5)
-        Sleep 150
+DispatchToEngine(engineName, contentType, payload) {
+    if (StrLower(engineName) = "gemini") {
+        SendToGemini(contentType, payload)
     } else {
-        ; 核心关键：等待用户手指离开物理 Alt 键，彻底消除 Alt+Win+C 畸形键引起的语音模式！
-        KeyWait "Alt", "T0.3"
-        Send "{Alt up}{Ctrl up}{Shift up}"
-        Sleep 50
+        SendToCopilot(contentType, payload)
+    }
+}
 
-        ; 发送纯净无污染的原生 Win + C，100% 呼出快速侧边窗口！
-        SetKeyDelay 40, 40
-        SendEvent CopilotAppHotkey
-        Sleep CopilotDelayMs
+SendToCopilot(contentType, payload) {
+    global WindowMode, CopilotAppHotkey, CopilotDelayMs
+
+    if (StrLower(WindowMode) = "full") {
+        ; --- 完整独立大窗口模式 (基于进程运行) ---
+        fullHwnd := GetCopilotFullHwnd()
+        if (fullHwnd != 0) {
+            if (WinGetMinMax(fullHwnd) == -1)
+                WinRestore(fullHwnd)
+            WinActivate(fullHwnd)
+            WinWaitActive(fullHwnd, , 1.5)
+            Sleep 150
+        } else {
+            copilotExe := "C:\Program Files (x86)\Microsoft\Copilot\Application\copilotapp.exe"
+            if FileExist(copilotExe) {
+                Run '"' . copilotExe . '"'
+            } else {
+                try Run "copilot:"
+            }
+            Sleep CopilotDelayMs
+        }
+    } else {
+        ; --- 快捷迷你窗口模式 (基于 Win+C 原生快捷指令) ---
+        miniHwnd := GetCopilotMiniHwnd()
+        if (miniHwnd != 0) {
+            if (WinGetMinMax(miniHwnd) == -1)
+                WinRestore(miniHwnd)
+            WinActivate(miniHwnd)
+            WinWaitActive(miniHwnd, , 1.5)
+            Sleep 150
+        } else {
+            KeyWait "Alt", "T0.3"
+            Send "{Alt up}{Ctrl up}{Shift up}"
+            Sleep 50
+            SetKeyDelay 40, 40
+            SendEvent CopilotAppHotkey
+            Sleep CopilotDelayMs
+        }
     }
 
     if (contentType = "text") {
@@ -191,25 +226,42 @@ SendToCopilot(contentType, payload) {
 }
 
 SendToGemini(contentType, payload) {
-    global GeminiAppHotkey, GeminiDelayMs
+    global WindowMode, GeminiAppHotkey, GeminiDelayMs
 
-    miniHwnd := GetGeminiMiniHwnd()
-
-    if (miniHwnd != 0) {
-        ; 核心保护：快速小浮窗已在桌面！直接激活置顶，绝不再次发送 Alt+G（彻底防止被关掉！）
-        if (WinGetMinMax(miniHwnd) == -1)
-            WinRestore(miniHwnd)
-        WinActivate(miniHwnd)
-        WinWaitActive(miniHwnd, , 1.5)
-        Sleep 150
+    if (StrLower(WindowMode) = "full") {
+        ; --- 完整独立大窗口模式 (基于 Chrome PWA 应用进程) ---
+        fullHwnd := GetGeminiFullHwnd()
+        if (fullHwnd != 0) {
+            if (WinGetMinMax(fullHwnd) == -1)
+                WinRestore(fullHwnd)
+            WinActivate(fullHwnd)
+            WinWaitActive(fullHwnd, , 1.5)
+            Sleep 150
+        } else {
+            try {
+                Run 'chrome.exe --app="https://gemini.google.com"'
+            } catch {
+                Run "https://gemini.google.com"
+            }
+            Sleep 1500
+        }
     } else {
-        ; 浮窗尚未开启：等待物理 Alt 键释放，纯净呼出图三快速浮窗
-        KeyWait "Alt", "T0.3"
-        Send "{Alt up}{Ctrl up}{Shift up}"
-        Sleep 50
-        SetKeyDelay 40, 40
-        SendEvent GeminiAppHotkey
-        Sleep GeminiDelayMs
+        ; --- 快捷迷你小浮窗模式 (基于 Alt+G 原生快捷指令) ---
+        miniHwnd := GetGeminiMiniHwnd()
+        if (miniHwnd != 0) {
+            if (WinGetMinMax(miniHwnd) == -1)
+                WinRestore(miniHwnd)
+            WinActivate(miniHwnd)
+            WinWaitActive(miniHwnd, , 1.5)
+            Sleep 150
+        } else {
+            KeyWait "Alt", "T0.3"
+            Send "{Alt up}{Ctrl up}{Shift up}"
+            Sleep 50
+            SetKeyDelay 40, 40
+            SendEvent GeminiAppHotkey
+            Sleep GeminiDelayMs
+        }
     }
 
     if (contentType = "text") {
@@ -228,7 +280,7 @@ SendToGemini(contentType, payload) {
 ; ==============================================================================
 
 LoadConfig() {
-    global ConfigFile, ActiveEngine, TranslateHotkey, CopilotAppHotkey, GeminiAppHotkey
+    global ConfigFile, ActiveEngine, WindowMode, TranslateHotkey, CopilotAppHotkey, GeminiAppHotkey
     global CopilotDelayMs, GeminiDelayMs, TextPromptTemplate, ImagePrompt, FilePrompt
 
     if !FileExist(ConfigFile)
@@ -249,6 +301,7 @@ LoadConfig() {
 
                 switch StrLower(key) {
                     case "activeengine": ActiveEngine := val
+                    case "windowmode": WindowMode := val
                     case "translatehotkey": TranslateHotkey := val
                     case "copilotapphotkey": CopilotAppHotkey := val
                     case "geminiapphotkey": GeminiAppHotkey := val
@@ -265,7 +318,6 @@ LoadConfig() {
 
 BindHotkeys() {
     global TranslateHotkey
-
     if (TranslateHotkey != "") {
         try Hotkey TranslateHotkey, (*) => ExecuteTranslate(), "On"
     }
@@ -276,21 +328,32 @@ BindHotkeys() {
 ; ==============================================================================
 
 InitTrayMenu() {
-    global ActiveEngine, TranslateHotkey
+    global ActiveEngine, WindowMode, TranslateHotkey
     tray := A_TrayMenu
     tray.Delete()
 
-    tray.Add("划词翻译助手 (" . TranslateHotkey . " -> " . ActiveEngine . ")", (*) => OpenConfigFile())
+    modeText := (StrLower(WindowMode) = "full") ? "完整大窗口" : "快捷迷你"
+    tray.Add("划词翻译助手 (" . TranslateHotkey . " -> " . ActiveEngine . " [" . modeText . "])", (*) => OpenConfigFile())
     tray.Disable("1&")
     tray.Add()
 
-    ; 单选引擎切换
-    tray.Add("切换默认引擎为: Copilot", (*) => SwitchEngine("Copilot"))
-    tray.Add("切换默认引擎为: Gemini", (*) => SwitchEngine("Gemini"))
+    ; 1. 引擎单选切换
+    tray.Add("引擎: Microsoft Copilot", (*) => SwitchEngine("Copilot"))
+    tray.Add("引擎: Google Gemini", (*) => SwitchEngine("Gemini"))
     if (StrLower(ActiveEngine) = "gemini") {
-        tray.Check("切换默认引擎为: Gemini")
+        tray.Check("引擎: Google Gemini")
     } else {
-        tray.Check("切换默认引擎为: Copilot")
+        tray.Check("引擎: Microsoft Copilot")
+    }
+    tray.Add()
+
+    ; 2. 窗口模式切换 (Mini vs Full)
+    tray.Add("⚡ 窗口模式: 快捷迷你窗口 (默认/秒开)", (*) => SwitchWindowMode("Mini"))
+    tray.Add("🖥️ 窗口模式: 完整独立大窗口 (多轮深聊)", (*) => SwitchWindowMode("Full"))
+    if (StrLower(WindowMode) = "full") {
+        tray.Check("🖥️ 窗口模式: 完整独立大窗口 (多轮深聊)")
+    } else {
+        tray.Check("⚡ 窗口模式: 快捷迷你窗口 (默认/秒开)")
     }
     tray.Add()
 
@@ -310,7 +373,6 @@ SwitchEngine(newEngine) {
     global ConfigFile, ActiveEngine
     ActiveEngine := newEngine
 
-    ; 更新配置文件中的 ActiveEngine 行
     if FileExist(ConfigFile) {
         try {
             content := FileRead(ConfigFile, "UTF-8")
@@ -321,6 +383,24 @@ SwitchEngine(newEngine) {
     }
 
     TrayTip "引擎已切换", "当前翻译引擎已切换为: " . newEngine, "Iconi"
+    InitTrayMenu()
+}
+
+SwitchWindowMode(newMode) {
+    global ConfigFile, WindowMode
+    WindowMode := newMode
+
+    if FileExist(ConfigFile) {
+        try {
+            content := FileRead(ConfigFile, "UTF-8")
+            newContent := RegExReplace(content, "i)WindowMode\s*=\s*.*", "WindowMode=" . newMode)
+            FileDelete(ConfigFile)
+            FileAppend(newContent, ConfigFile, "UTF-8")
+        }
+    }
+
+    desc := (StrLower(newMode) = "full") ? "🖥️ 完整独立大窗口" : "⚡ 快捷迷你窗口"
+    TrayTip "模式已切换", "当前窗口模式已切换为: " . desc, "Iconi"
     InitTrayMenu()
 }
 
