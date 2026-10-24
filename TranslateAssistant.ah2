@@ -1,4 +1,4 @@
-﻿#Requires AutoHotkey v2.0
+#Requires AutoHotkey v2.0
 #SingleInstance Force
 
 ; ==============================================================================
@@ -94,7 +94,7 @@ FormatTextPrompt(rawText) {
     return TextPromptTemplate . "`n`n" . pureText
 }
 
-; 毫秒级借用并在 100ms 内立即还原剪贴板（彻底防止提示词污染系统剪贴板）
+; 毫秒级借用并在 120ms 内立即还原剪贴板（彻底防止提示词污染系统剪贴板）
 PasteAndRestoreClipboard(payload) {
     clipBackup := ClipboardAll()
     A_Clipboard := payload
@@ -109,13 +109,23 @@ PressEnterToSubmit() {
     SendEvent "{Enter}"
 }
 
+; 统一内容投递器（消除重复代码）
+DeliverPayload(contentType, payload) {
+    if (contentType = "text") {
+        PasteAndRestoreClipboard(payload)
+        PressEnterToSubmit()
+    } else if (contentType = "image" || contentType = "file") {
+        Send "^v"
+        Sleep 500
+        PasteAndRestoreClipboard(payload)
+    }
+}
+
 ; ==============================================================================
 ; 纯进程与窗口直接前置激活（不依赖任何屏幕坐标与大小，彻底杜绝 Toggle 误关闭）
 ; ==============================================================================
 
-; 直接激活已存在的 Copilot 界面（不论是全屏还是小浮窗，只要有真实 UI 窗口直接前置）
 ActivateCopilotDirect() {
-    ; 1. 扫描属于 Copilot 独立进程的真实可见窗口
     try {
         ids := WinGetList("ahk_exe copilotapp.exe")
         for id in ids {
@@ -132,7 +142,6 @@ ActivateCopilotDirect() {
         }
     }
 
-    ; 2. 扫描系统级包含 Copilot 标题的可见窗口
     SetTitleMatchMode 2
     if WinExist("Copilot") {
         hwnd := WinExist("Copilot")
@@ -150,14 +159,12 @@ ActivateCopilotDirect() {
     return false
 }
 
-; 直接激活已存在的 Gemini 快速小浮窗
 ActivateGeminiDirect() {
     try {
         ids := WinGetList("ahk_exe chrome.exe")
         for id in ids {
             if DllCall("IsWindowVisible", "Ptr", id) {
                 title := WinGetTitle(id)
-                ; 排除普通浏览器大网页（普通网页必带 - Google Chrome 后缀）
                 if !InStr(title, " - Google Chrome") {
                     WinGetPos &x, &y, &w, &h, id
                     if (w > 100 && h > 100) {
@@ -174,7 +181,6 @@ ActivateGeminiDirect() {
     return false
 }
 
-; 激活 Gemini 完整大窗口
 ActivateGeminiFullDirect() {
     try {
         ids := WinGetList("ahk_exe chrome.exe")
@@ -209,9 +215,7 @@ DispatchToEngine(engineName, contentType, payload) {
 SendToCopilot(contentType, payload) {
     global WindowMode, CopilotAppHotkey, CopilotDelayMs
 
-    ; 优先直接前置激活窗口（幂等操作，无论按多少次绝对不会关闭窗口！）
     if (!ActivateCopilotDirect()) {
-        ; 桌面完全没有该窗口时，才首次呼出
         if (StrLower(WindowMode) = "full") {
             copilotExe := "C:\Program Files (x86)\Microsoft\Copilot\Application\copilotapp.exe"
             if FileExist(copilotExe) {
@@ -231,14 +235,7 @@ SendToCopilot(contentType, payload) {
         Sleep 150
     }
 
-    if (contentType = "text") {
-        PasteAndRestoreClipboard(payload)
-        PressEnterToSubmit()
-    } else if (contentType = "image" || contentType = "file") {
-        Send "^v"
-        Sleep 500
-        PasteAndRestoreClipboard(payload)
-    }
+    DeliverPayload(contentType, payload)
 }
 
 SendToGemini(contentType, payload) {
@@ -257,7 +254,6 @@ SendToGemini(contentType, payload) {
             Sleep 1500
         }
     } else {
-        ; 优先直接前置激活（绝不重复发送 Alt+G！）
         isActivated := ActivateGeminiDirect()
         if (!isActivated) {
             KeyWait "Alt", "T0.3"
@@ -272,14 +268,7 @@ SendToGemini(contentType, payload) {
     if (isActivated)
         Sleep 150
 
-    if (contentType = "text") {
-        PasteAndRestoreClipboard(payload)
-        PressEnterToSubmit()
-    } else if (contentType = "image" || contentType = "file") {
-        Send "^v"
-        Sleep 500
-        PasteAndRestoreClipboard(payload)
-    }
+    DeliverPayload(contentType, payload)
 }
 
 ; ==============================================================================
@@ -330,6 +319,21 @@ BindHotkeys() {
     }
 }
 
+; 安全回写配置项
+UpdateIniKey(keyName, keyValue) {
+    global ConfigFile
+    if FileExist(ConfigFile) {
+        try {
+            content := FileRead(ConfigFile, "UTF-8")
+            pattern := "i)" . keyName . "\s*=\s*.*"
+            replacement := keyName . "=" . keyValue
+            newContent := RegExReplace(content, pattern, replacement)
+            FileDelete(ConfigFile)
+            FileAppend(newContent, ConfigFile, "UTF-8")
+        }
+    }
+}
+
 ; ==============================================================================
 ; 托盘菜单与开机自启动
 ; ==============================================================================
@@ -377,35 +381,17 @@ InitTrayMenu() {
 }
 
 SwitchEngine(newEngine) {
-    global ConfigFile, ActiveEngine
+    global ActiveEngine
     ActiveEngine := newEngine
-
-    if FileExist(ConfigFile) {
-        try {
-            content := FileRead(ConfigFile, "UTF-8")
-            newContent := RegExReplace(content, "i)ActiveEngine\s*=\s*.*", "ActiveEngine=" . newEngine)
-            FileDelete(ConfigFile)
-            FileAppend(newContent, ConfigFile, "UTF-8")
-        }
-    }
-
+    UpdateIniKey("ActiveEngine", newEngine)
     TrayTip "引擎已切换", "当前翻译引擎已切换为: " . newEngine, "Iconi"
     InitTrayMenu()
 }
 
 SwitchWindowMode(newMode) {
-    global ConfigFile, WindowMode
+    global WindowMode
     WindowMode := newMode
-
-    if FileExist(ConfigFile) {
-        try {
-            content := FileRead(ConfigFile, "UTF-8")
-            newContent := RegExReplace(content, "i)WindowMode\s*=\s*.*", "WindowMode=" . newMode)
-            FileDelete(ConfigFile)
-            FileAppend(newContent, ConfigFile, "UTF-8")
-        }
-    }
-
+    UpdateIniKey("WindowMode", newMode)
     desc := (StrLower(newMode) = "full") ? "🖥️ 完整独立大窗口" : "⚡ 快捷迷你窗口"
     TrayTip "模式已切换", "当前窗口模式已切换为: " . desc, "Iconi"
     InitTrayMenu()
