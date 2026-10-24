@@ -136,25 +136,17 @@ SendToCopilot(contentType, payload) {
 SendToGemini(contentType, payload) {
     global GeminiAppHotkey, GeminiDelayMs
 
-    ; 1. 关键保护：先释放物理 Alt 键，防止与用户刚刚按下的 Alt+C 产生修饰键冲突
+    ; 1. 核心关键：等待用户手指离开物理 Alt 键（最多等 0.3 秒），彻底消除按键冲突
+    KeyWait "Alt", "T0.3"
     Send "{Alt up}{Ctrl up}{Shift up}"
-    Sleep 60
+    Sleep 50
 
-    ; 2. 模拟真实击键发送 GeminiAppHotkey（如 Alt+G），确保 Chromium 能够精准捕获
+    ; 2. 模拟真实击键发送您原本的 Alt + G，精准呼出图三快速浮窗！
     SetKeyDelay 40, 40
     SendEvent GeminiAppHotkey
     Sleep GeminiDelayMs
 
-    ; 3. 若浮窗未能呼出（如未处于运行状态），备用拉起独立小浮窗
-    SetTitleMatchMode 2
-    if (!WinActive("Gemini") && !WinActive("ahk_exe chrome.exe")) {
-        try {
-            Run 'chrome.exe --app="https://gemini.google.com"'
-            Sleep 1500
-        }
-    }
-
-    ; 4. 内容投递
+    ; 3. 稳健投递内容
     if (contentType = "text") {
         A_Clipboard := payload
         Send "^v"
