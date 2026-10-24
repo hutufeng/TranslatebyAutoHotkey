@@ -102,22 +102,63 @@ DispatchToEngine(engineName, contentType, payload) {
     }
 }
 
+; ==============================================================================
+; 迷你窗口精准指纹探测函数（基于进程名、无后缀标题与物理尺寸）
+; ==============================================================================
+
+GetGeminiMiniHwnd() {
+    ; 遍历所有 chrome.exe 窗口，精准寻找宽度 < 650 且可见的快速浮窗
+    try {
+        ids := WinGetList("ahk_exe chrome.exe")
+        for this_id in ids {
+            if !DllCall("IsWindowVisible", "Ptr", this_id)
+                continue
+            
+            WinGetPos &x, &y, &w, &h, this_id
+            ; 图三迷你小浮窗的绝对物理尺寸：宽度在 300 到 650 之间
+            if (w >= 300 && w <= 650) {
+                title := WinGetTitle(this_id)
+                if !InStr(title, " - Google Chrome") {
+                    return this_id
+                }
+            }
+        }
+    }
+    return 0
+}
+
+GetCopilotMiniHwnd() {
+    ; Copilot 迷你侧边栏：宿主为 msedgewebview2.exe 且宽度 <= 500
+    try {
+        ids := WinGetList("ahk_exe msedgewebview2.exe")
+        for this_id in ids {
+            if !DllCall("IsWindowVisible", "Ptr", this_id)
+                continue
+            WinGetPos &x, &y, &w, &h, this_id
+            if (w > 0 && w <= 500)
+                return this_id
+        }
+        if WinExist("Copilot ahk_class ApplicationFrameWindow")
+            return WinExist("Copilot ahk_class ApplicationFrameWindow")
+    }
+    return 0
+}
+
 SendToCopilot(contentType, payload) {
     global CopilotAppHotkey, CopilotDelayMs
 
     Send "{Alt up}{Ctrl up}{Shift up}"
     Sleep 40
 
-    SetTitleMatchMode 2
-    copilotHwnd := WinExist("Copilot") || WinExist("ahk_exe msedgewebview2.exe")
+    miniHwnd := GetCopilotMiniHwnd()
 
-    if (copilotHwnd) {
-        ; 窗口已存在：直接激活置顶，绝不重复发送唤起按键（防止被 Toggle 误关闭）
-        WinActivate(copilotHwnd)
-        WinWaitActive(copilotHwnd, , 1.5)
-        Sleep 250
+    if (miniHwnd != 0) {
+        ; 迷你窗口已存在：直接激活置顶，绝不重复发送 Win+C（彻底防止触发 Toggle 关闭）
+        WinActivate(miniHwnd)
+        WinWaitActive(miniHwnd, , 1.5)
+        Sleep 150
     } else {
-        ; 窗口未打开：发送配置文件中指定的 Copilot 唤起快捷键
+        ; 迷你窗口不存在：发送唤出快捷键
         Send CopilotAppHotkey
         Sleep CopilotDelayMs
     }
@@ -136,17 +177,25 @@ SendToCopilot(contentType, payload) {
 SendToGemini(contentType, payload) {
     global GeminiAppHotkey, GeminiDelayMs
 
-    ; 1. 核心关键：等待用户手指离开物理 Alt 键（最多等 0.3 秒），彻底消除按键冲突
-    KeyWait "Alt", "T0.3"
-    Send "{Alt up}{Ctrl up}{Shift up}"
-    Sleep 50
+    miniHwnd := GetGeminiMiniHwnd()
 
-    ; 2. 模拟真实击键发送您原本的 Alt + G，精准呼出图三快速浮窗！
-    SetKeyDelay 40, 40
-    SendEvent GeminiAppHotkey
-    Sleep GeminiDelayMs
+    if (miniHwnd != 0) {
+        ; 核心保护：快速小浮窗已在桌面！直接激活置顶，绝不再次发送 Alt+G（彻底防止被关掉！）
+        if (WinGetMinMax(miniHwnd) == -1)
+            WinRestore(miniHwnd)
+        WinActivate(miniHwnd)
+        WinWaitActive(miniHwnd, , 1.5)
+        Sleep 150
+    } else {
+        ; 浮窗尚未开启：等待物理 Alt 键释放，纯净呼出图三快速浮窗
+        KeyWait "Alt", "T0.3"
+        Send "{Alt up}{Ctrl up}{Shift up}"
+        Sleep 50
+        SetKeyDelay 40, 40
+        SendEvent GeminiAppHotkey
+        Sleep GeminiDelayMs
+    }
 
-    ; 3. 稳健投递内容
     if (contentType = "text") {
         A_Clipboard := payload
         Send "^v"
